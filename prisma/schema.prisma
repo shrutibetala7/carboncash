@@ -1,0 +1,342 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mongodb"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Auth ────────────────────────────────────────────────────────────
+
+model User {
+  id            String    @id @default(auto()) @map("_id") @db.ObjectId
+  email         String    @unique
+  name          String?
+  image         String?
+  emailVerified DateTime?
+  role          UserRole  @default(USER)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  onboardingComplete Boolean @default(false)
+  brandSlug          String? @unique
+
+  businessProfile BusinessProfile?
+  accounts        Account[]
+  sessions        Session[]
+  footprints      Footprint[]
+  orders          Order[]
+  certificates    Certificate[]
+  cbamRecords     CbamRecord[]
+  publicPage      PublicPage?
+}
+
+enum UserRole {
+  USER
+  ADMIN
+}
+
+model Account {
+  id                String  @id @default(auto()) @map("_id") @db.ObjectId
+  userId            String  @db.ObjectId
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(auto()) @map("_id") @db.ObjectId
+  sessionToken String   @unique
+  userId       String   @db.ObjectId
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  id         String   @id @default(auto()) @map("_id") @db.ObjectId
+  identifier String
+  token      String
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// ─── Onboarding / Business Profile ──────────────────────────────────
+
+model BusinessProfile {
+  id      String          @id @default(auto()) @map("_id") @db.ObjectId
+  userId  String          @unique @db.ObjectId
+  user    User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name    String
+  sector  BusinessSector
+  size    BusinessSize
+  country String          @default("IN")
+  gstin   String?
+  pan     String?
+  purpose BusinessPurpose
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+}
+
+enum BusinessSector {
+  MANUFACTURING
+  RETAIL
+  FOOD_BEVERAGE
+  TEXTILE
+  LOGISTICS
+  HOSPITALITY
+  IT_SERVICES
+  HEALTHCARE
+  EDUCATION
+  AGRICULTURE
+  CONSTRUCTION
+  OTHER
+}
+
+enum BusinessSize {
+  MICRO
+  SMALL
+  MEDIUM
+  LARGE
+}
+
+enum BusinessPurpose {
+  D2C_BRAND
+  SME_COMPLIANCE
+  CBAM_EXPORTER
+}
+
+// ─── Carbon Footprint ────────────────────────────────────────────────
+
+model Footprint {
+  id     String          @id @default(auto()) @map("_id") @db.ObjectId
+  userId String          @db.ObjectId
+  user   User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  year   Int
+  status FootprintStatus @default(DRAFT)
+
+  // Scope 1 — direct emissions
+  dieselLitres   Float @default(0)
+  lpgKg          Float @default(0)
+  ngCubicMetres  Float @default(0)
+  ownFleetKm     Float @default(0)
+
+  // Scope 2 — purchased energy
+  gridKwh Float @default(0)
+
+  // Scope 3 — value chain
+  airTravelKm        Float @default(0)
+  hotelNights        Int   @default(0)
+  thirdPartyShipKm   Float @default(0)
+  packagingKg        Float @default(0)
+  cloudSpendInr      Float @default(0)
+
+  // Calculated totals (tCO2e)
+  scope1Total Float @default(0)
+  scope2Total Float @default(0)
+  scope3Total Float @default(0)
+  grandTotal  Float @default(0)
+
+  // Emission factor snapshot at calculation time
+  emissionFactors Json?
+
+  notes     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+enum FootprintStatus {
+  DRAFT
+  FINALISED
+}
+
+// ─── Carbon Credit Projects ──────────────────────────────────────────
+
+model Project {
+  id            String      @id @default(auto()) @map("_id") @db.ObjectId
+  slug          String      @unique
+  name          String
+  location      String
+  country       String      @default("IN")
+  lat           Float?
+  lng           Float?
+  type          ProjectType
+  methodology   String
+  verifier      String
+  registryName  String
+  registryUrl   String
+  story         String
+  photos        String[]
+  vintage       Int
+  priceInr      Float
+  volumeTotal   Float
+  volumeRetired Float       @default(0)
+  published     Boolean     @default(false)
+  featured      Boolean     @default(false)
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  orderItems OrderItem[]
+}
+
+enum ProjectType {
+  BIOCHAR
+  BIOGAS
+  AGROFORESTRY
+  SOLAR
+  WIND
+  COOKSTOVES
+  AFFORESTATION
+  MANGROVE
+  BLUE_CARBON
+  METHANE_CAPTURE
+  OTHER
+}
+
+// ─── Orders & Payments ───────────────────────────────────────────────
+
+model Order {
+  id                String      @id @default(auto()) @map("_id") @db.ObjectId
+  userId            String      @db.ObjectId
+  user              User        @relation(fields: [userId], references: [id])
+  orderNumber       String      @unique
+  status            OrderStatus @default(PENDING)
+  totalTco2e        Float
+  totalAmountInr    Float
+  gstAmountInr      Float       @default(0)
+  razorpayOrderId   String?
+  razorpayPaymentId String?
+  invoiceNumber     String?
+  invoiceUrl        String?
+  kycRequired       Boolean     @default(false)
+  kycVerified       Boolean     @default(false)
+  items             OrderItem[]
+  certificate       Certificate?
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+}
+
+enum OrderStatus {
+  PENDING
+  PAID
+  RETIRED
+  CANCELLED
+  REFUNDED
+}
+
+model OrderItem {
+  id        String  @id @default(auto()) @map("_id") @db.ObjectId
+  orderId   String  @db.ObjectId
+  order     Order   @relation(fields: [orderId], references: [id])
+  projectId String  @db.ObjectId
+  project   Project @relation(fields: [projectId], references: [id])
+  tco2e     Float
+  priceInr  Float
+  vintage   Int
+}
+
+// ─── Retirement Certificates ─────────────────────────────────────────
+
+model Certificate {
+  id              String            @id @default(auto()) @map("_id") @db.ObjectId
+  certId          String            @unique
+  userId          String            @db.ObjectId
+  user            User              @relation(fields: [userId], references: [id])
+  orderId         String            @unique @db.ObjectId
+  order           Order             @relation(fields: [orderId], references: [id])
+  totalTco2e      Float
+  retirementDate  DateTime
+  status          CertificateStatus @default(PENDING_RETIREMENT)
+  registrySerials String[]
+  pdfUrl          String?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+}
+
+enum CertificateStatus {
+  PENDING_RETIREMENT
+  RETIRED
+}
+
+// ─── Public Neutrality Page ──────────────────────────────────────────
+
+model PublicPage {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId      String   @unique @db.ObjectId
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  slug        String   @unique
+  published   Boolean  @default(false)
+  brandName   String
+  brandLogo   String?
+  accentColor String   @default("#C4622D")
+  story       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// ─── CBAM Module ─────────────────────────────────────────────────────
+
+model CbamRecord {
+  id                String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId            String   @db.ObjectId
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  shipmentDate      DateTime
+  cnCode            String
+  productName       String
+  productionVolume  Float
+  productionUnit    String   @default("tonne")
+  countryOfOrigin   String   @default("IN")
+  energyMix         Json
+  directEmissions   Float
+  indirectEmissions Float    @default(0)
+  totalEmissions    Float
+  carbonPrice       Float    @default(0)
+  documents         String[]
+  notes             String?
+  quarter           String
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+}
+
+// ─── CMS / Blog ──────────────────────────────────────────────────────
+
+model BlogPost {
+  id          String    @id @default(auto()) @map("_id") @db.ObjectId
+  slug        String    @unique
+  title       String
+  excerpt     String
+  content     String
+  authorName  String
+  coverImage  String?
+  published   Boolean   @default(false)
+  publishedAt DateTime?
+  tags        String[]
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+// ─── Audit Log ───────────────────────────────────────────────────────
+
+model AuditLog {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId    String?  @db.ObjectId
+  action    String
+  entity    String
+  entityId  String
+  metadata  Json?
+  ip        String?
+  createdAt DateTime @default(now())
+}
